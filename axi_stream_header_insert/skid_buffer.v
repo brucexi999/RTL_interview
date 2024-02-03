@@ -88,65 +88,10 @@ module skid_buffer # (
         end
     end
 
-    /*always@(posedge clk) begin
-        if (rst)
-            valid_out <= 0;
-        else if (valid_pipe || valid_buffer)
-            valid_out <= 1;
-        else
-            valid_out <= 0;
-    end
-
-    // Somehow Modelsim deasserts valid_buffer at the same cycle when ready_in goes high so I have to use these FFs to delay the data in one extra cycle. In real hardware, this should be unnecessary 
-    always@(posedge clk) begin
-        if (rst)
-            data_out <= 0;
-        else if (valid_buffer)
-            data_out <= data_buffer[DATA_WIDTH-1:0];
-        else if (valid_pipe)
-            data_out <= data_pipe[DATA_WIDTH-1:0];
-    end
-
-    always@(posedge clk) begin
-        if (rst)
-            keep_out <= 0;
-        else if (valid_buffer)
-            keep_out <= data_buffer[DATA_WIDTH+DATA_BYTE_WIDTH-1:DATA_WIDTH];
-        else if (valid_pipe)
-            keep_out <= data_pipe[DATA_WIDTH+DATA_BYTE_WIDTH-1:DATA_WIDTH];
-    end
-
-    always@(posedge clk) begin
-        if (rst)
-            last_out <= 0;
-        else if (valid_buffer)
-            last_out <= data_buffer[DATA_WIDTH+DATA_BYTE_WIDTH];
-        else if (valid_pipe)
-            last_out <= data_pipe[DATA_WIDTH+DATA_BYTE_WIDTH];
-    end*/
-    
-    /*always @(posedge clk) begin
-        if (reset) begin
-            valid_buffer <= 0;
-            data_buffer <= 0;
-        end
-        // The next stage issues a stall, but the previous stage is still sending data, we need to buffer the incoming data, and indicate its validity
-        else if ((valid_in && ready_out) && (valid_out && !ready_in)) begin
-            valid_buffer <= 1;
-            data_buffer <= {keep_in, data_in};
-        end
-        // If the next stage is ready for data, we send out the buffered data
-        else if (ready_in) begin
-            valid_buffer <= 0;
-            data_buffer <= 0;
-        end
-    end*/
-
     assign ready_out = !valid_buffer;  // We are always ready for new data from the previous stage, as long as the buffer is empty
     assign valid_out = valid_pipe || valid_buffer;  // The output is valid whenever there's buffered data or data in the pipe register
     assign data_out = valid_buffer ? data_buffer : data_pipe;  // If we have data in the buffer, send it out first, else, send the data from the pipe
     assign keep_out = valid_buffer ? keep_buffer : keep_pipe;
     assign last_out = valid_buffer ? last_buffer : last_pipe;
-
 
 endmodule
