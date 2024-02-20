@@ -54,7 +54,7 @@ module axi_stream_insert_header_tb ();
     int UPPER_BOUND = 100;
     int SEED = 1984;
     int MASK = 32'h7FFFFFFF;
-
+    /*
     // Generate the random durations
     initial begin
     IDLE_DURATION = ($random(SEED) & MASK % UPPER_BOUND) + 1; // Ensure non-zero
@@ -66,7 +66,7 @@ module axi_stream_insert_header_tb ();
     $display("READY_DURATION_1: %d", READY_DURATION_1);
     $display("DEASSERTION_DURATION: %d", DEASSERTION_DURATION);
     $display("READY_DURATION_2: %d", READY_DURATION_2);
-    end
+    end*/
 
     logic [DATA_WIDTH-1:0] counter_slave;
 
@@ -134,7 +134,7 @@ module axi_stream_insert_header_tb ();
     int PAUSE_DURATION = 10;
     int PAUSE_CYCLE = 66;
     int DATA_MAX = 99;
-
+/*
     initial begin
     PAUSE_DURATION = ($random(SEED) & MASK % UPPER_BOUND) + 1; // Ensure non-zero
     PAUSE_CYCLE = ($random(SEED) & MASK % UPPER_BOUND) + 1;
@@ -144,7 +144,7 @@ module axi_stream_insert_header_tb ();
     $display("PAUSE_CYCLE: %d", PAUSE_CYCLE);
     $display("DATA_MAX: %d", DATA_MAX);
     end
-    
+    */
     logic [DATA_WIDTH-1:0] counter_master;
     logic pause;
 

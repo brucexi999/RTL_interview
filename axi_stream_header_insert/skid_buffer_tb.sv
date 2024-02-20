@@ -34,10 +34,10 @@ module skid_buffer_tb ();
     end
 
     always @(posedge clk) begin
-	valid_in <= $random | $random;
-	ready_in <= $random | $random;
-    if (valid_in && ready_out)  // If a handshake is observed at the input side, increment the data
-        data_in <= data_in + 1'b1;
+        valid_in <= $random | $random;
+        ready_in <= $random | $random;
+        if (valid_in && ready_out)  // If a handshake is observed at the input side, increment the data
+            data_in <= data_in + 1'b1;
     end
 
     always @(posedge clk) begin
@@ -46,7 +46,7 @@ module skid_buffer_tb ();
             data_next <= data_out + 1;
         end
         if (data_previous != data_out && data_next != data_out) begin
-            $display("Mismatch at time %d, data_previous: %d, data_next: %d, data_out: %d",$time, data_previous, data_next, data_out);
+            $display("Mismatch at time %d, data_previous: %d, data_next: %d, data_out: %d", $time, data_previous, data_next, data_out);
             fail = 1;
         end
         //else
