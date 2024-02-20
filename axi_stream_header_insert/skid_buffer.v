@@ -1,3 +1,10 @@
+/*
+Pipeline register with skid buffer, outputs are registered
+Reference: 
+https://github.com/thomasrussellmurphy/stx_cookbook/blob/master/storage/ready_skid_tb.sv
+https://docs.xilinx.com/r/en-US/pg373-axi-register-slice/Fully-Registered
+https://www.twblogs.net/a/5bfae448bd9eee7aed32c7d0
+*/
 module skid_buffer # (
     parameter DATA_WIDTH = 32,
     parameter DATA_BYTE_WIDTH = DATA_WIDTH/8
@@ -12,86 +19,96 @@ module skid_buffer # (
     input last_in,
     input ready_in,
 
-    output wire valid_out,
-    output wire [DATA_WIDTH-1:0] data_out,
-    output wire [DATA_BYTE_WIDTH-1:0] keep_out,
-    output wire last_out,
-    output wire ready_out
+    output reg valid_out,
+    output reg [DATA_WIDTH-1:0] data_out,
+    output reg [DATA_BYTE_WIDTH-1:0] keep_out,
+    output reg last_out,
+    output reg ready_out
 );
 
-    reg valid_buffer;  // Indicate whether the internel buffer has valid data
-    reg valid_pipe;  // Indicate whether the pipe register has valid data
+    reg [DATA_WIDTH-1:0] data_skid;
+    reg [DATA_BYTE_WIDTH-1:0] keep_skid;
+    reg last_skid;
 
-    reg [DATA_WIDTH-1:0] data_buffer;
-    reg [DATA_BYTE_WIDTH-1:0] keep_buffer;
-    reg last_buffer;
-
-    reg [DATA_WIDTH-1:0] data_pipe;
-    reg [DATA_BYTE_WIDTH-1:0] keep_pipe;
-    reg last_pipe;
+    reg valid_skid;
 
     always@(posedge clk) begin
         if (rst)
-            valid_pipe <= 0;
-        else if (valid_in && ready_out)  // As long as we have handshake with the previous stage, the pipeline takes in new data
-            valid_pipe <= 1;
-        else if (ready_in && !valid_buffer && valid_pipe)  // This means the buffer is empty, and we have sent out the data in the pipeline register as well
-            valid_pipe <= 0;
+            valid_out <= 0;
+        // If we have received data from the upstream, or we have data in the skid buffer
+        else if ((valid_in && ready_out) || valid_skid)
+            valid_out <= 1;
+        // No valid data from the upstream, and no valid data in the skid, and the current data is taken by the downstream, the data at the next cycle will be invalid
+        else if ((ready_in && valid_out) && ~valid_skid && (!valid_in || !ready_out))
+            valid_out <= 0;
         else
-            valid_pipe <= valid_pipe;
-    end
-    
-    always@(posedge clk) begin
-        if (rst) begin
-            data_pipe <= 0;
-            keep_pipe <= 0;
-            last_pipe <= 0;
-        end
-        else if (valid_in && ready_out) begin  // As long as we have handshake with the previous stage, the pipeline takes in new data
-            data_pipe <= data_in;
-            keep_pipe <= keep_in;
-            last_pipe <= last_in;
-        end
-        else begin
-            data_pipe <= data_pipe;
-            keep_pipe <= keep_pipe;
-            last_pipe <= last_pipe;
-        end
-    end
-    
-    always@(posedge clk) begin
-        if (rst)
-            valid_buffer <= 0;
-        else if ((valid_in && ready_out) && (valid_out && !ready_in))  // The next stage issues a stall, but the previous stage is still sending data, we need to buffer the pipe data, and indicate the buffer is full
-            valid_buffer <= 1;
-        else if (ready_in && valid_buffer)
-            valid_buffer <= 0;
-        else
-            valid_buffer <= valid_buffer;
+            valid_out <= valid_out;
     end
 
+    // Essentially ready_out = ~valid_skid
     always@(posedge clk) begin
         if (rst) begin
-            data_buffer <= 0;
-            keep_buffer <= 0;
-            last_buffer <= 0;
+            valid_skid <= 0;
+            ready_out <= 0;
         end
+        // We have received data from the upstream, and the data in the pipeline register has not been taken, buffer the upstream data
         else if ((valid_in && ready_out) && (valid_out && !ready_in)) begin
-            data_buffer <= data_pipe;
-            keep_buffer <= keep_pipe;
-            last_buffer <= last_pipe;
+            valid_skid <= 1;
+            ready_out <= 0;
+        end
+        // If there's data in the skid buffer, and the downstream asserted ready, we know the data in the skid buffer will be sent out
+        else if (ready_in && valid_skid) begin
+            valid_skid <= 0;
+            ready_out <= 1;
         end
         else begin
-            data_buffer <= data_buffer;
-            keep_buffer <= keep_buffer;
-            last_buffer <= last_buffer;
+            valid_skid <= valid_skid;
+            ready_out <= !valid_skid;
         end
     end
 
-    assign ready_out = !valid_buffer;  // We are always ready for new data from the previous stage, as long as the buffer is empty
-    assign valid_out = valid_pipe || valid_buffer;  // The output is valid whenever there's buffered data or data in the pipe register
-    assign data_out = valid_buffer ? data_buffer : data_pipe;  // If we have data in the buffer, send it out first, else, send the data from the pipe
-    assign keep_out = valid_buffer ? keep_buffer : keep_pipe;
-    assign last_out = valid_buffer ? last_buffer : last_pipe;
+    always@(posedge clk) begin
+        if (rst) begin
+            data_out <= 0;
+            keep_out <= 0;
+            last_out <= 0;
+        end
+        // When the current data in the pipeline register has been taken by downstream, and we found there's data in the skid buffer
+        else if (valid_out && ready_in && valid_skid) begin
+            data_out <= data_skid;
+            keep_out <= keep_skid;
+            last_out <= last_skid;
+        end
+        // We have taken in new data from the upstream, now if we don't have valid pipeline register, or the downstream has taken the current data, we put the incoming data into the pipeline register
+        else if (valid_in && ready_out && (!valid_out || (ready_in && valid_out))) begin
+            data_out <= data_in;
+            keep_out <= keep_in;
+            last_out <= last_in;
+        end
+        else begin
+            data_out <= data_out;
+            keep_out <= keep_out;
+            last_out <= last_out;
+        end
+    end
+
+    always@(posedge clk) begin
+        if (rst) begin
+            data_skid <= 0;
+            keep_skid <= 0;
+            last_skid <= 0;
+        end
+        // We have taken in new data from the upstream, but the current data in the pipeline register has not been taken, store the incoming data into skid buffer
+        else if ((valid_in && ready_out) && (valid_out && !ready_in)) begin
+            data_skid <= data_in;
+            keep_skid <= keep_in;
+            last_skid <= last_in;
+        end
+        else begin
+            data_skid <= data_skid;
+            keep_skid <= keep_skid;
+            last_skid <= last_skid;
+        end
+    end
 
 endmodule
