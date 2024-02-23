@@ -8,7 +8,7 @@ module axi_stream_insert_header_tb ();
     logic rst_n;
 
     logic valid_insert, valid_in, valid_out;
-    logic [DATA_WIDTH-1:0] data_insert, data_in, data_out;
+    logic [DATA_WIDTH-1:0] data_insert, data_in, data_out, new_in, new_insert;
     logic [DATA_BYTE_WIDTH-1:0] keep_insert, keep_in, keep_out;
     logic last_in, last_out;
     logic [BYTE_CNT_WIDTH-1:0] byte_insert_cnt;
@@ -16,11 +16,60 @@ module axi_stream_insert_header_tb ();
 
     axi_header_master header_master (clk, rst_n, valid_insert, data_insert, keep_insert, byte_insert_cnt, ready_insert);
     axi_stream_insert_header dut (
-        clk, rst_n, 
+        clk, rst_n,
         valid_in, data_in, keep_in, last_in, ready_in,
         valid_out, data_out, keep_out, last_out, ready_out,
         valid_insert, data_insert, keep_insert, byte_insert_cnt, ready_insert
     );
+/*
+    initial begin
+        clk = 0;
+
+        // Stream data
+        data_in = 0;
+        keep_in = {DATA_BYTE_WIDTH{1'b1}};
+        last_in = 0;
+        valid_in = 0;
+
+        // Header
+        data_insert = 0;
+        keep_insert = 0;
+        byte_insert_cnt = 0;
+        valid_insert = 0;
+
+        // Slave
+        ready_out = 0;
+
+        rst_n = 1;
+        #1 rst_n = 0;
+	    @(posedge clk) 
+            rst_n = 1;
+    end
+    
+    always begin 
+	#5 clk = ~clk;
+    end
+
+    always@(posedge clk) begin
+        if (!rst_n)
+            data_in <= 0;
+        else
+            data_in <= new_in;
+    end
+    
+    always@(*) begin
+        new_in = data_in + 1;
+        if (new_in == 'd255)
+            new_in = data_in;
+    end
+
+    
+
+    initial begin
+        #6000;
+        $stop;
+    end
+*/
 
     initial begin
         clk = 0; #5;
@@ -133,7 +182,7 @@ module axi_stream_insert_header_tb ();
 
     int PAUSE_DURATION = 10;
     int PAUSE_CYCLE = 66;
-    int DATA_MAX = 99;
+    int DATA_MAX = 'h12345678 + 'd99;
 /*
     initial begin
     PAUSE_DURATION = ($random(SEED) & MASK % UPPER_BOUND) + 1; // Ensure non-zero
@@ -159,7 +208,7 @@ module axi_stream_insert_header_tb ();
 
     always@(posedge clk) begin
         if (!rst_n || last_in)
-            data_in <= 0;
+            data_in <= 'h12345678;
         else if (valid_in && ready_in && !last_in)
             data_in <= data_in + 1;
         else
@@ -182,8 +231,20 @@ module axi_stream_insert_header_tb ();
             pause <= 0;
     end
     
+    logic [DATA_BYTE_WIDTH-1:0] keep_last = {DATA_BYTE_WIDTH{1'b1}};
+
     assign last_in = (data_in == DATA_MAX);
-    assign keep_in = {DATA_BYTE_WIDTH{1'b1}};
+    always@(*) begin
+        keep_in = {DATA_BYTE_WIDTH{1'b1}};
+        if (last_in)
+            keep_in = keep_last;
+    end
+
+    always@(posedge last_in) begin
+        keep_last = keep_last << 1;
+        if (keep_last == 0)
+            keep_last = {DATA_BYTE_WIDTH{1'b1}};
+    end
 
 endmodule
 

@@ -7,7 +7,8 @@ https://www.twblogs.net/a/5bfae448bd9eee7aed32c7d0
 */
 module skid_buffer # (
     parameter DATA_WIDTH = 32,
-    parameter DATA_BYTE_WIDTH = DATA_WIDTH/8
+    parameter DATA_BYTE_WIDTH = DATA_WIDTH/8,
+    parameter BYTE_CNT_WD = $clog2(DATA_BYTE_WIDTH)
 )
 (
     input clk,
@@ -16,18 +17,21 @@ module skid_buffer # (
     input valid_in,
     input [DATA_WIDTH-1:0] data_in,
     input [DATA_BYTE_WIDTH-1:0] keep_in,
+    input [BYTE_CNT_WD-1:0] byte_insert_cnt_in,
     input last_in,
     input ready_in,
 
     output reg valid_out,
     output reg [DATA_WIDTH-1:0] data_out,
     output reg [DATA_BYTE_WIDTH-1:0] keep_out,
+    output reg [BYTE_CNT_WD-1:0] byte_insert_cnt_out,
     output reg last_out,
     output reg ready_out
 );
 
     reg [DATA_WIDTH-1:0] data_skid;
     reg [DATA_BYTE_WIDTH-1:0] keep_skid;
+    reg [BYTE_CNT_WD-1:0] byte_insert_cnt_skid;
     reg last_skid;
 
     reg valid_skid;
@@ -71,23 +75,27 @@ module skid_buffer # (
         if (rst) begin
             data_out <= 0;
             keep_out <= 0;
+            byte_insert_cnt_out <= 0;
             last_out <= 0;
         end
         // When the current data in the pipeline register has been taken by downstream, and we found there's data in the skid buffer
         else if (valid_out && ready_in && valid_skid) begin
             data_out <= data_skid;
             keep_out <= keep_skid;
+            byte_insert_cnt_out <= byte_insert_cnt_skid;
             last_out <= last_skid;
         end
         // We have taken in new data from the upstream, now if we don't have valid pipeline register, or the downstream has taken the current data, we put the incoming data into the pipeline register
         else if (valid_in && ready_out && (!valid_out || (ready_in && valid_out))) begin
             data_out <= data_in;
             keep_out <= keep_in;
+            byte_insert_cnt_out <= byte_insert_cnt_in;
             last_out <= last_in;
         end
         else begin
             data_out <= data_out;
             keep_out <= keep_out;
+            byte_insert_cnt_out <= byte_insert_cnt_out;
             last_out <= last_out;
         end
     end
@@ -96,17 +104,20 @@ module skid_buffer # (
         if (rst) begin
             data_skid <= 0;
             keep_skid <= 0;
+            byte_insert_cnt_skid <= 0;
             last_skid <= 0;
         end
         // We have taken in new data from the upstream, but the current data in the pipeline register has not been taken, store the incoming data into skid buffer
         else if ((valid_in && ready_out) && (valid_out && !ready_in)) begin
             data_skid <= data_in;
             keep_skid <= keep_in;
+            byte_insert_cnt_skid <= byte_insert_cnt_in;
             last_skid <= last_in;
         end
         else begin
             data_skid <= data_skid;
             keep_skid <= keep_skid;
+            byte_insert_cnt_skid <= byte_insert_cnt_skid;
             last_skid <= last_skid;
         end
     end
