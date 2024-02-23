@@ -4,6 +4,8 @@ This project implements a module that inserts a header into a data packet being 
 
 ## RTL Design
 
+![Figure 0](./figures/insert_header_datapath.jpeg)
+
 Due to area constraints, the entire design was engineered without using FIFOs or state machines. The top-level module, located in `axi_stream_header_insert.v`, has two sets of input ports and one set of output ports. One set of inputs is connected to a potential AXI Stream master device, feeding data in packets (bursts). The other set of inputs is connected to another master device providing a header for each data packet. The outputs are connected to a slave device.
 
 Between the slave and the two masters, all signals, both the actual data and the handshake signals, travel in two pipelines, each with a pipeline register. To handle backpressure from the slave and eliminate bubbles efficiently, skid buffers, implemented in `skid_buffer.sv`, equip both registers in the pipelines. Although designed with a single pipeline stage for simplicity, adding more stages could be achieved with minimal effort. Arbitrations allow two masters to communicate with one slave.
