@@ -45,8 +45,6 @@ module skid_buffer # (
         // No valid data from the upstream, and no valid data in the skid, and the current data is taken by the downstream, the data at the next cycle will be invalid
         else if ((ready_in && valid_out) && ~valid_skid && (!valid_in || !ready_out))
             valid_out <= 0;
-        else
-            valid_out <= valid_out;
     end
 
     // Essentially ready_out = ~valid_skid
@@ -66,7 +64,6 @@ module skid_buffer # (
             ready_out <= 1;
         end
         else begin
-            valid_skid <= valid_skid;
             ready_out <= !valid_skid;
         end
     end
@@ -92,12 +89,6 @@ module skid_buffer # (
             byte_insert_cnt_out <= byte_insert_cnt_in;
             last_out <= last_in;
         end
-        else begin
-            data_out <= data_out;
-            keep_out <= keep_out;
-            byte_insert_cnt_out <= byte_insert_cnt_out;
-            last_out <= last_out;
-        end
     end
 
     always@(posedge clk) begin
@@ -113,12 +104,6 @@ module skid_buffer # (
             keep_skid <= keep_in;
             byte_insert_cnt_skid <= byte_insert_cnt_in;
             last_skid <= last_in;
-        end
-        else begin
-            data_skid <= data_skid;
-            keep_skid <= keep_skid;
-            byte_insert_cnt_skid <= byte_insert_cnt_skid;
-            last_skid <= last_skid;
         end
     end
 

@@ -27,7 +27,6 @@ module axi_stream_insert_header #(
     
     // -----------------Wires----------------------
     wire rst;
-    //wire [BYTE_CNT_WD-1:0] data_byte_width = DATA_BYTE_WD;
     wire [BYTE_CNT_WD-1:0] shift_control;
 
     // Stream
@@ -36,19 +35,12 @@ module axi_stream_insert_header #(
     wire [DATA_BYTE_WD-1:0] keep_from_stream;
     wire last_from_stream;
     wire ready_to_stream;
-
+    wire ready_to_stream_last;
     wire [DATA_WD-1:0] data_from_stream_rshift;
     wire [DATA_BYTE_WD-1:0] keep_from_stream_rshift;
     wire [DATA_WD-1:0] data_from_stream_lshift;
     wire [DATA_BYTE_WD-1:0] keep_from_stream_lshift;
-    
-    //wire [DATA_WD-1:0] data_stream;
-    //wire [DATA_BYTE_WD-1:0] keep_stream;
-    //wire valid_stream;
-
-    //wire [DATA_WD-1:0] data_to_shift;
-    //wire [DATA_BYTE_WD-1:0] keep_to_shift;
-    //wire last_signal;
+    wire keep_lshift_all_0;
 
     // Header
     wire valid_from_header;
@@ -56,7 +48,6 @@ module axi_stream_insert_header #(
     wire [DATA_BYTE_WD-1:0] keep_from_header;
     wire [BYTE_CNT_WD-1:0] byte_cnt_from_header;
     wire ready_to_header;
-
     wire [DATA_WD-1:0] data_from_header_lshift;
     wire [DATA_BYTE_WD-1:0] keep_from_header_lshift;
 
@@ -66,35 +57,13 @@ module axi_stream_insert_header #(
     wire [DATA_BYTE_WD-1:0] keep_to_downstream;
     wire last_to_downstream;
     wire ready_from_downstream;
-    
-    //wire tail_flag;
-    /*wire ready_stream;
-    wire valid_slave_stream;
-    wire [DATA_WD-1:0] data_slave_stream;
-    wire [DATA_BYTE_WD-1:0] keep_slave_stream;
-    wire last_slave_stream;
-    wire ready_slave_stream;
-
-    wire ready_header;
-    wire valid_slave_header;
-    wire [DATA_WD-1:0] data_slave_header;
-    wire [DATA_WD-1:0] null_removed_header;
-    wire [DATA_BYTE_WD-1:0] keep_slave_header;
-    wire last_slave_header;
-    wire ready_slave_header;*/
 
     //------------------Registers-------------------
-    reg header_inserted_flag;
-    reg tail_buffer_valid;
-
+    reg header_inserted_reg;
     reg [DATA_WD-1:0] data_from_stream_lshift_reg;
     reg [DATA_BYTE_WD-1:0] keep_from_stream_lshift_reg;
     reg [BYTE_CNT_WD-1:0] byte_insert_cnt_reg;
     reg last_from_stream_reg;
-
-    reg [DATA_WD-1:0] data_tail_buffer;
-    reg [DATA_BYTE_WD-1:0] keep_tail_buffer;
-    reg last_tail_buffer;
     
     //------------------Instantiations-------------
     skid_buffer stream_skid (
@@ -121,7 +90,7 @@ module axi_stream_insert_header #(
         .data_in(data_insert), 
         .keep_in(keep_insert),
         .byte_insert_cnt_in(byte_insert_cnt),
-        .last_in(),  // Last signal from the header is always 1
+        .last_in(),
         .ready_in(ready_to_header),
         .valid_out(valid_from_header),
         .data_out(data_from_header),
@@ -148,35 +117,34 @@ module axi_stream_insert_header #(
         .ready_out(ready_from_downstream)
     );
 
+    //----------------Sequential logic---------------
     // Only updated when inserting new header
     always@(posedge clk) begin
         if (rst)
             byte_insert_cnt_reg <= 0;
         else if (valid_from_header && ready_to_header)
             byte_insert_cnt_reg <= byte_cnt_from_header;
-        else
-            byte_insert_cnt_reg <= byte_insert_cnt_reg;
     end 
     
     always@(posedge clk) begin
         if (rst | last_to_downstream)  // It will only be high for 1 cycle
             last_from_stream_reg <= 0;
-        else if (valid_from_stream && ready_to_stream)
-            //last_from_stream_reg <= last_signal;
+        /*
+        Here, we play a trick in the combinational logic. This reg is only 1 when there's a valid last signal from the stream skid,
+        At that moment, the ready to the stream skid is deassertted for 1 cycle if keep_from_stream_lshift is not all zero, yet the ready from downstream is 1 (if the output skid didn't deasserted)
+        So at the stream skid side, there's no data coming in. But at the output skid side, there's data going out, that is exactly our tail.
+        */
+        else if (valid_from_stream && last_from_stream && !keep_lshift_all_0 && ready_from_downstream) 
             last_from_stream_reg <= last_from_stream;
-        else
-            last_from_stream_reg <= last_from_stream_reg;
     end
     
     always@(posedge clk) begin
         if (rst)
-            header_inserted_flag <= 0;
-        else if (!header_inserted_flag && valid_from_header && ready_to_header) // We have observed a handshake with the header skid buffer, we have completed a header insertion
-            header_inserted_flag <= 1;
-        else if (header_inserted_flag && last_to_downstream)  // After sending out the last frame of the stream, go back to header insertion mdoe
-            header_inserted_flag <= 0;
-        else
-            header_inserted_flag <= header_inserted_flag;
+            header_inserted_reg <= 0;  
+        else if (!header_inserted_reg && valid_from_header && ready_to_header) // We have observed a handshake with the header skid buffer, we have completed a header insertion
+            header_inserted_reg <= 1;
+        else if (header_inserted_reg && last_to_downstream)  // After sending out the last frame of the stream, go back to header insertion mdoe
+            header_inserted_reg <= 0;
     end
 
     // Only when there's handshake from the stream skid buffer this register can be updated, otherwise there will be data lost
@@ -186,40 +154,20 @@ module axi_stream_insert_header #(
             data_from_stream_lshift_reg <= 0;
             keep_from_stream_lshift_reg <= 0;
         end
-        else if (valid_from_stream && ready_to_stream) begin
+        /*
+        ready_from_downstream is used instead of ready_to_stream is similar to the logic for last_from_stream_reg.
+        In the case of a tail, we want to create an illusion to the stream skid that the last data is not taken because ready_to_stream is 0,
+        However, it is still loaded into data_from_stream_lshift_reg, and after one cycle, when it has reached to the output skid, 
+        we reassert ready_to_stream to make things transparent again.
+        */
+        else if (valid_from_stream && ready_from_downstream) begin
             data_from_stream_lshift_reg <= data_from_stream_lshift;
             keep_from_stream_lshift_reg <= keep_from_stream_lshift;
         end
-        else begin
-            data_from_stream_lshift_reg <= data_from_stream_lshift_reg;
-            keep_from_stream_lshift_reg <= keep_from_stream_lshift_reg;
-        end
     end
-
-    /*always@(posedge clk) begin
-        if (rst || (!header_inserted_flag && valid_from_header && ready_to_header)) begin // When we have completed a header insertion, the data in the tail buffer will be taken
-            tail_buffer_valid <= 0;
-            data_tail_buffer <= 0;
-            keep_tail_buffer <= 0;
-            last_tail_buffer <= 0;
-        end
-        else if (tail_flag && valid_from_stream && ready_to_stream) begin
-            tail_buffer_valid <= 1;
-            data_tail_buffer <= data_from_stream;
-            keep_tail_buffer <= keep_from_stream;
-            last_tail_buffer <= last_from_stream;
-        end
-        else begin
-            tail_buffer_valid <= tail_buffer_valid;
-            data_tail_buffer <= data_tail_buffer;
-            keep_tail_buffer <= keep_tail_buffer;
-            last_tail_buffer <= last_tail_buffer;
-        end
-    end*/
     
-    
+    //---------------Combinational logic----------------
     assign rst = !rst_n;
-
     /*
     Initially, when header is not inserted, we need to wait for both the header and the first frame of the stream to be valid,
     if at cycle = t1 both are valid, then within the same cycle, ready for both should be asserted to take one frame of data from both.
@@ -231,57 +179,35 @@ module axi_stream_insert_header #(
     this will cost us 1 extra cycle to take the data.
 
     After the header is being inserted, we should switch mode. ready_to_header should be kept 0 until we have sent out the last stream frame.
-    ready_to_stream in this mode is a bit complicated, it is not simply ready_from_downstream. We also need to make sure there's no data
-    in the tail buffer
+    In the case where a tail is being sent, ready_to_stream will be 0. Otherwise we simply pass ready_from_downstream
     */
-   
-    assign ready_to_header = !header_inserted_flag && valid_from_header && valid_from_stream && ready_from_downstream;
-    //assign ready_to_stream = header_inserted_flag? (ready_from_downstream && !  ) : ready_to_header; 
-    assign ready_to_stream = header_inserted_flag? ready_from_downstream : ready_to_header;
-
+    assign ready_to_header = !header_inserted_reg && valid_from_header && valid_from_stream && ready_from_downstream;
+    assign ready_to_stream_last = (!keep_lshift_all_0 && last_from_stream && valid_from_stream && !last_from_stream_reg) ? 1'b0 : ready_from_downstream;
+    assign ready_to_stream = header_inserted_reg ? ready_to_stream_last: ready_to_header;
     /*
     For the header frame, both the header and the stream need to be valid such that they can be merged
-    For streaming frame, the shift register is valid all the time, so we simply pass the valid from the stream skid buffer if no tail.
-    If there's tail, we pass insteal the valid from the shift register, which is 1
+    For streaming frame, the shift register is valid all the time, so we simply pass the valid from the stream skid buffer.
     */
-    //assign valid_stream = last_from_stream_reg ? (valid_from_stream || tail_buffer_valid): 1'b1;
-    //assign valid_to_downstream = header_inserted_flag? valid_stream : (valid_from_stream && valid_from_header);
-
-    assign valid_to_downstream = header_inserted_flag? valid_from_stream : (valid_from_stream && valid_from_header);
-    /*
-    When there's data in the tail buffer, we need to send it out first
-    */
-    //assign data_to_shift = tail_buffer_valid? data_tail_buffer : data_from_stream;
-    //assign keep_to_shift = tail_buffer_valid? keep_tail_buffer : keep_from_stream;
-    //assign last_signal = tail_buffer_valid? last_tail_buffer : last_from_stream;
-     
+    assign valid_to_downstream = header_inserted_reg? valid_from_stream : (valid_from_stream && valid_from_header);
     /* 
     Use shift operation to pack frames (remove null bytes).
     After taking the byte_insert_cnt from the header skid buffer in the cycle that the header is inserted,
     we need to register it. When switching to the stream mode, we will take the value from the regsiter
     */
-    assign shift_control = header_inserted_flag? byte_insert_cnt_reg : byte_cnt_from_header;
-    assign data_from_header_lshift = data_from_header << ((DATA_BYTE_WD-(shift_control+1))*8);
+    assign shift_control = header_inserted_reg? byte_insert_cnt_reg : byte_cnt_from_header;
+    assign data_from_header_lshift = data_from_header << ((DATA_BYTE_WD-(shift_control+1))<<3);
     assign keep_from_header_lshift = keep_from_header << (DATA_BYTE_WD-(shift_control+1));
 
-    assign data_from_stream_rshift = data_from_stream >> ((shift_control+1)*8);
-    assign keep_from_stream_rshift = keep_from_stream >> (shift_control+1);
+    assign data_from_stream_rshift = last_from_stream_reg ? {DATA_WD{1'b0}} : data_from_stream >> ((shift_control+1) << 3);
+    assign keep_from_stream_rshift = last_from_stream_reg ? {DATA_BYTE_WD{1'b0}} : keep_from_stream >> (shift_control+1);
 
-    assign data_from_stream_lshift = data_from_stream << ((DATA_BYTE_WD-(shift_control+1))*8);
+    assign data_from_stream_lshift = data_from_stream << ((DATA_BYTE_WD-(shift_control+1)) << 3);
     assign keep_from_stream_lshift = keep_from_stream << (DATA_BYTE_WD-(shift_control+1));
     
     // Use bitwise OR operation to merge frames
-    // If header_inserted_flag == 0 that means we need to insert header, otherwise, we are streaming
-
-    //assign data_to_downstream = header_inserted_flag ? data_stream : (data_from_header_lshift | data_from_stream_rshift);
-    //assign keep_to_downstream = header_inserted_flag ? keep_stream : (keep_from_header_lshift | keep_from_stream_rshift);
-
-    // In the cycle of sending the tail, flaged by the last_from_stream_reg, we direcly pass the tails without bitwise OR
-    //assign data_stream = last_from_stream_reg ? data_from_stream_lshift_reg : (data_from_stream_lshift_reg | data_from_stream_rshift);
-    //assign keep_stream = last_from_stream_reg ? keep_from_stream_lshift_reg : (keep_from_stream_lshift_reg | keep_from_stream_rshift);
-    
-    assign data_to_downstream = header_inserted_flag ? (data_from_stream_lshift_reg | data_from_stream_rshift) : (data_from_header_lshift | data_from_stream_rshift);
-    assign keep_to_downstream = header_inserted_flag ? (keep_from_stream_lshift_reg | keep_from_stream_rshift) : (keep_from_header_lshift | keep_from_stream_rshift);
+    // If header_inserted_reg == 0 that means we need to insert header, otherwise, we are streaming
+    assign data_to_downstream = header_inserted_reg ? (data_from_stream_lshift_reg | data_from_stream_rshift) : (data_from_header_lshift | data_from_stream_rshift);
+    assign keep_to_downstream = header_inserted_reg ? (keep_from_stream_lshift_reg | keep_from_stream_rshift) : (keep_from_header_lshift | keep_from_stream_rshift);
     /*
     Once we have detected a last signal from the stream and a handshake,
     if after left-shifting its associated keep we found it is all 0, then the last will propagate directly to the output skid,
@@ -291,8 +217,8 @@ module axi_stream_insert_header #(
     We also need to deassert ready to stream skid in this extra cycle of sending the tail, otherwise it will get overwritten by
     the next frame
     */
-    //assign last_to_downstream = (keep_from_stream_lshift == {DATA_BYTE_WD{1'b0}})? (last_signal && valid_from_stream && ready_to_stream) : last_from_stream_reg;
-    assign last_to_downstream = (keep_from_stream_lshift == {DATA_BYTE_WD{1'b0}})? (last_from_stream && valid_from_stream && ready_to_stream) : last_from_stream_reg;
-    //assign tail_flag = last_signal && valid_from_stream && ready_to_stream && keep_from_stream_lshift != {DATA_BYTE_WD{1'b0}};
+    assign keep_lshift_all_0 = ~keep_from_stream_lshift[0] & ~keep_from_stream_lshift[DATA_BYTE_WD-1];
+    assign last_to_downstream = keep_lshift_all_0 ? (last_from_stream && valid_from_stream && ready_to_stream) : last_from_stream_reg;
 
+    
 endmodule
