@@ -134,14 +134,14 @@ module axi_stream_insert_header #(
         At that moment, the ready to the stream skid is deassertted for 1 cycle if keep_from_stream_lshift is not all zero, yet the ready from downstream is 1 (if the output skid didn't deasserted)
         So at the stream skid side, there's no data coming in. But at the output skid side, there's data going out, that is exactly our tail.
         */
-        else if (valid_from_stream && last_from_stream && !keep_lshift_all_0 && ready_from_downstream) 
+        else if (valid_from_stream && !keep_lshift_all_0 && ready_from_downstream) 
             last_from_stream_reg <= last_from_stream;
     end
     
     always@(posedge clk) begin
         if (rst)
             header_inserted_reg <= 0;  
-        else if (!header_inserted_reg && valid_from_header && ready_to_header) // We have observed a handshake with the header skid buffer, we have completed a header insertion
+        else if (valid_from_header && ready_to_header) // We have observed a handshake with the header skid buffer, we have completed a header insertion
             header_inserted_reg <= 1;
         else if (header_inserted_reg && last_to_downstream)  // After sending out the last frame of the stream, go back to header insertion mdoe
             header_inserted_reg <= 0;
@@ -195,7 +195,7 @@ module axi_stream_insert_header #(
     we need to register it. When switching to the stream mode, we will take the value from the regsiter
     */
     assign shift_control = header_inserted_reg? byte_insert_cnt_reg : byte_cnt_from_header;
-    assign data_from_header_lshift = data_from_header << ((DATA_BYTE_WD-(shift_control+1))<<3);
+    assign data_from_header_lshift = data_from_header << ((DATA_BYTE_WD-(shift_control+1)) << 3);
     assign keep_from_header_lshift = keep_from_header << (DATA_BYTE_WD-(shift_control+1));
 
     assign data_from_stream_rshift = last_from_stream_reg ? {DATA_WD{1'b0}} : data_from_stream >> ((shift_control+1) << 3);
