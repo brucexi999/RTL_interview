@@ -14,7 +14,7 @@ module axi_stream_insert_header_tb ();
     logic [BYTE_CNT_WIDTH-1:0] byte_insert_cnt;
     logic ready_insert, ready_in, ready_out;
 
-    axi_header_master header_master (clk, rst_n, valid_insert, data_insert, keep_insert, byte_insert_cnt, ready_insert);
+    //axi_header_master header_master (clk, rst_n, valid_insert, data_insert, keep_insert, byte_insert_cnt, ready_insert);
     axi_stream_insert_header dut (
         clk, rst_n,
         valid_in, data_in, keep_in, last_in, ready_in,
@@ -89,6 +89,111 @@ module axi_stream_insert_header_tb ();
         $stop;
     end
 
+    // Slave asserts and deasserts ready_out randomly
+    always @(posedge clk) begin
+        if (!rst_n)
+            ready_out <= 0;
+        else
+            ready_out <= $random & 1; 
+    end
+    
+    /*
+    The header master will increment the header, and randomely generate the keep signal. 
+    When valid_insert is low, it can be asserted anytime regardless of the state of ready_insert.
+    When valid_insert is high, it cannot change unless ready_insert is also high.
+    */
+    task generate_keep_insert(
+        output logic [DATA_BYTE_WIDTH-1:0] keep,
+        output logic [BYTE_CNT_WIDTH-1:0] cnt
+    );
+        automatic int num_valid_bytes = $urandom_range(1, DATA_BYTE_WIDTH);
+        begin
+            keep = 0; // Initialize keep to all zeros
+            for (int i = 0; i < num_valid_bytes; i = i + 1) begin
+                keep[i] = 1'b1;
+            end
+            keep[0] = 1'b1; // Ensure LSB is set to 1
+            cnt = num_valid_bytes - 1;
+        end
+    endtask
+
+    always@(posedge clk) begin
+        if (!rst_n)
+            valid_insert <= 0;
+        else if (!valid_insert) // If valid is low, assert it at random time
+            valid_insert <= $random & 1;
+        else if (valid_insert && ready_insert) // If valid and ready are both high, a handshake is observed, either keep or deassert valid
+            valid_insert <= $random & 1;
+    end
+
+    always@(posedge clk) begin
+        if (!rst_n)
+            data_insert <= 'hdeadbeef;
+        else if (valid_insert && ready_insert) // Increment the header when the previous one is taken
+            data_insert <= data_insert + 1;
+    end
+
+    always@(posedge clk) begin
+        if (!rst_n) begin
+            keep_insert <= {DATA_BYTE_WIDTH{1'b1}};
+            byte_insert_cnt <= {BYTE_CNT_WIDTH{1'b1}};
+        end
+        else if (valid_insert && ready_insert) begin
+            generate_keep_insert(keep_insert, byte_insert_cnt);
+        end
+    end
+
+    /*
+    The stream master is the same with the header master except its keep generator is different and it has to generate the last signal
+    */
+    task generate_keep_in(
+        output logic [DATA_BYTE_WIDTH-1:0] keep
+    );
+        automatic int num_valid_bytes = $urandom_range(1, DATA_BYTE_WIDTH);
+        automatic int num_invalid_bytes = DATA_BYTE_WIDTH - num_valid_bytes;
+        begin
+            keep = ~0; // Initialize keep to all ones
+            for (int i = 0; i < num_invalid_bytes; i = i + 1) begin
+                keep[i] = 1'b0;
+            end
+        end
+    endtask
+
+    always@(posedge clk) begin
+        if (!rst_n)
+            valid_in <= 0;
+        else if (!valid_in) // If valid is low, assert it at random time
+            valid_in <= $random & 1;
+        else if (valid_in && ready_in) // If valid and ready are both high, a handshake is observed, either keep or deassert valid
+            valid_in <= $random & 1;
+    end
+
+    always@(posedge clk) begin
+        if (!rst_n)
+            data_in <= 'h12345678;
+        else if (valid_in && ready_in) // Increment the header when the previous one is taken
+            data_in <= data_in + 1;
+    end
+
+    always@(posedge clk) begin
+        if (!rst_n) begin
+            last_in <= 0;
+            keep_in <= {DATA_BYTE_WIDTH{1'b1}};
+        end
+        else if (valid_in && ready_in) begin
+            if (last_in) begin // If the previous frame is last, this frame cannot be last
+                last_in <= 0;
+                keep_in <= {DATA_BYTE_WIDTH{1'b1}};
+            end
+            else if (~($random | $random) & 1) begin
+                last_in <= 1;
+                generate_keep_in(keep_in);
+            end
+        end
+    end
+
+
+
     //------------------An embedded slave module---------------
     /* 
     This slave module will first idel for some time (IDLE_DURATION), in which state ready_out = 0,
@@ -96,13 +201,13 @@ module axi_stream_insert_header_tb ();
     then deassert ready_out again (DEASSERTION_DURATION), after which, it is re-asserted (READY_DURATION_2)
     */
 
-    int IDLE_DURATION = 10;
+    /*int IDLE_DURATION = 10;
     int READY_DURATION_1 = 200;
     int DEASSERTION_DURATION = 5;
     int READY_DURATION_2 = 300;
     int UPPER_BOUND = 100;
     int SEED = 1984;
-    int MASK = 32'h7FFFFFFF;
+    int MASK = 32'h7FFFFFFF;*/
     /*
     // Generate the random durations
     initial begin
@@ -117,7 +222,7 @@ module axi_stream_insert_header_tb ();
     $display("READY_DURATION_2: %d", READY_DURATION_2);
     end*/
 
-    logic [DATA_WIDTH-1:0] counter_slave;
+    /*logic [DATA_WIDTH-1:0] counter_slave;
 
     always@(posedge clk) begin
         if (!rst_n)
@@ -170,7 +275,7 @@ module axi_stream_insert_header_tb ();
             end
             default: next_state = STATE_IDLE;
         endcase
-    end
+    end*/
 
     //-----------------------An embedded master stream module-----------------
 
@@ -180,10 +285,10 @@ module axi_stream_insert_header_tb ();
     It generates incrementing data, with a ceiling of DATA_MAX.
     */
 
-    int PAUSE_DURATION = 10;
-    int PAUSE_CYCLE = 66;
-    int DATA_MAX = 'h12345678 + 'd99;
-/*
+    //int PAUSE_DURATION = 10;
+    //int PAUSE_CYCLE = 66;
+    //int DATA_MAX = 'h12345678 + 'd99;
+    /*
     initial begin
     PAUSE_DURATION = ($random(SEED) & MASK % UPPER_BOUND) + 1; // Ensure non-zero
     PAUSE_CYCLE = ($random(SEED) & MASK % UPPER_BOUND) + 1;
@@ -194,7 +299,7 @@ module axi_stream_insert_header_tb ();
     $display("DATA_MAX: %d", DATA_MAX);
     end
     */
-    logic [DATA_WIDTH-1:0] counter_master;
+    /*logic [DATA_WIDTH-1:0] counter_master;
     logic pause;
 
     always@(posedge clk) begin
@@ -244,7 +349,7 @@ module axi_stream_insert_header_tb ();
         keep_last = keep_last << 1;
         if (keep_last == 0)
             keep_last = {DATA_BYTE_WIDTH{1'b1}};
-    end
+    end*/
 
 endmodule
 

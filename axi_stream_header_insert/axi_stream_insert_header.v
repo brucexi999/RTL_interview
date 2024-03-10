@@ -127,15 +127,17 @@ module axi_stream_insert_header #(
     end 
     
     always@(posedge clk) begin
-        if (rst | last_to_downstream)  // It will only be high for 1 cycle
+        if (rst)  // It will only be high for 1 cycle
             last_from_stream_reg <= 0;
         /*
         Here, we play a trick in the combinational logic. This reg is only 1 when there's a valid last signal from the stream skid,
-        At that moment, the ready to the stream skid is deassertted for 1 cycle if keep_from_stream_lshift is not all zero, yet the ready from downstream is 1 (if the output skid didn't deasserted)
+        At that moment, the ready to the stream skid is deasserted for 1 cycle if keep_from_stream_lshift is not all zero, yet the ready from downstream is 1 (if the output skid didn't deasserted)
         So at the stream skid side, there's no data coming in. But at the output skid side, there's data going out, that is exactly our tail.
         */
-        else if (valid_from_stream && !keep_lshift_all_0 && ready_from_downstream) 
-            last_from_stream_reg <= last_from_stream;
+        else if (valid_from_stream && !keep_lshift_all_0 && last_from_stream && ready_from_downstream) 
+            last_from_stream_reg <= 1;
+        if (last_from_stream_reg && valid_to_downstream && ready_from_downstream)
+            last_from_stream_reg <= 0;
     end
     
     always@(posedge clk) begin
@@ -143,7 +145,7 @@ module axi_stream_insert_header #(
             header_inserted_reg <= 0;  
         else if (valid_from_header && ready_to_header) // We have observed a handshake with the header skid buffer, we have completed a header insertion
             header_inserted_reg <= 1;
-        else if (header_inserted_reg && last_to_downstream)  // After sending out the last frame of the stream, go back to header insertion mdoe
+        else if (header_inserted_reg && last_to_downstream && valid_to_downstream && ready_from_downstream)  // After sending out the last frame of the stream, go back to header insertion mdoe
             header_inserted_reg <= 0;
     end
 
@@ -182,6 +184,7 @@ module axi_stream_insert_header #(
     In the case where a tail is being sent, ready_to_stream will be 0. Otherwise we simply pass ready_from_downstream
     */
     assign ready_to_header = !header_inserted_reg && valid_from_header && valid_from_stream && ready_from_downstream;
+    // TODO: ready_to_stream_last will only switch back to ready_from_downstream when the tail is taken
     assign ready_to_stream_last = (!keep_lshift_all_0 && last_from_stream && valid_from_stream && !last_from_stream_reg) ? 1'b0 : ready_from_downstream;
     assign ready_to_stream = header_inserted_reg ? ready_to_stream_last: ready_to_header;
     /*
@@ -218,7 +221,7 @@ module axi_stream_insert_header #(
     the next frame
     */
     assign keep_lshift_all_0 = ~keep_from_stream_lshift[0] & ~keep_from_stream_lshift[DATA_BYTE_WD-1];
-    assign last_to_downstream = keep_lshift_all_0 ? (last_from_stream && valid_from_stream && ready_to_stream) : last_from_stream_reg;
+    assign last_to_downstream = (keep_lshift_all_0 && last_from_stream && valid_from_stream)? 1'b1 : last_from_stream_reg;
 
     
 endmodule
