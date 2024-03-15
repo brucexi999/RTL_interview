@@ -34,7 +34,7 @@ module skid_buffer_tb ();
     end
 
     always @(posedge clk) begin
-        valid_in <= $random | $random;
+        valid_in <= $random | $random; // TODO: need to adhere to handshake. When ready = 0, valid must keep 1
         ready_in <= $random | $random;
         if (valid_in && ready_out)  // If a handshake is observed at the input side, increment the data
             data_in <= data_in + 1'b1;
