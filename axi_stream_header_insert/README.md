@@ -8,10 +8,6 @@ This project implements a module that inserts a header into a data packet being 
 
 Due to area constraints, the entire design was engineered without using FIFOs or state machines. The top-level module, located in `axi_stream_header_insert.v`, has two sets of input ports and one set of output ports. One set of inputs is connected to a potential AXI Stream master device, feeding data in packets (bursts). The other set of inputs is connected to another master device providing a header for each data packet. The outputs are connected to a slave device.
 
-Between the slave and the two masters, all signals, both the actual data and the handshake signals, travel in two pipelines, each with a pipeline register. To handle backpressure from the slave and eliminate bubbles efficiently, skid buffers, implemented in `skid_buffer.sv`, equip both registers in the pipelines. Although designed with a single pipeline stage for simplicity, adding more stages could be achieved with minimal effort. Arbitrations allow two masters to communicate with one slave.
-
-Upon resetting, the `axi_stream_header_insert` module waits for a header from the header master. Once received, and a handshake observed, it discards the null bytes in the header by setting them to 0 and sends it to the slave. Then, the module transmits an entire packet of data from the stream master to the slave, preceded by the inserted header. At the end of the packet, signaled by the `last` signal, the module processes another header, masks its null bytes, and transmits another data packet. This process then repeats.
-
 ### Pipeline register with skid buffer (registered output)
 The design concepts of pipeline register and skid buffer are based on [this post](https://www.twblogs.net/a/5bfae448bd9eee7aed32c7d0). However, the design implemented there has outputs (valid and data) coming from a mux, which selects between the pipeline register and the skid buffer. 
 
