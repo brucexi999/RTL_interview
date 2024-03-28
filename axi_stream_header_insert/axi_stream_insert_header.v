@@ -184,7 +184,6 @@ module axi_stream_insert_header #(
     In the case where a tail is being sent, ready_to_stream will be 0. Otherwise we simply pass ready_from_downstream
     */
     assign ready_to_header = !header_inserted_reg && valid_from_header && valid_from_stream && ready_from_downstream;
-    // TODO: ready_to_stream_last will only switch back to ready_from_downstream when the tail is taken
     assign ready_to_stream_last = (!keep_lshift_all_0 && last_from_stream && valid_from_stream && !last_from_stream_reg) ? 1'b0 : ready_from_downstream;
     assign ready_to_stream = header_inserted_reg ? ready_to_stream_last: ready_to_header;
     /*
