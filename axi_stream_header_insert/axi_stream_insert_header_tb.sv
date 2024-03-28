@@ -14,6 +14,8 @@ module axi_stream_insert_header_tb ();
     logic [BYTE_CNT_WIDTH-1:0] byte_insert_cnt;
     logic ready_insert, ready_in, ready_out;
 
+    logic all1;
+
     //axi_header_master header_master (clk, rst_n, valid_insert, data_insert, keep_insert, byte_insert_cnt, ready_insert);
     axi_stream_insert_header dut (
         clk, rst_n,
@@ -82,9 +84,15 @@ module axi_stream_insert_header_tb ();
     initial begin
         rst_n = 0; #15;
         rst_n = 1;
+        #5985;
+        rst_n = 0; #15;
+        rst_n = 1;
     end
 
     initial begin
+        all1 = 0;
+        #6000;
+        all1 = 1;
         #6000;
         $stop;
     end
@@ -93,6 +101,8 @@ module axi_stream_insert_header_tb ();
     always @(posedge clk) begin
         if (!rst_n)
             ready_out <= 0;
+        else if (all1)
+            ready_out <= 1;
         else
             ready_out <= $random & 1; 
     end
@@ -120,6 +130,8 @@ module axi_stream_insert_header_tb ();
     always@(posedge clk) begin
         if (!rst_n)
             valid_insert <= 0;
+        else if (all1)
+            valid_insert <= 1;
         else if (!valid_insert) // If valid is low, assert it at random time
             valid_insert <= $random & 1;
         else if (valid_insert && ready_insert) // If valid and ready are both high, a handshake is observed, either keep or deassert valid
@@ -162,6 +174,8 @@ module axi_stream_insert_header_tb ();
     always@(posedge clk) begin
         if (!rst_n)
             valid_in <= 0;
+        else if (all1)
+            valid_in <= 1;
         else if (!valid_in) // If valid is low, assert it at random time
             valid_in <= $random & 1;
         else if (valid_in && ready_in) // If valid and ready are both high, a handshake is observed, either keep or deassert valid
