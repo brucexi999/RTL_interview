@@ -31,7 +31,7 @@
 // completion of the command by transitioning spi_drv_rdy from 0 to 1. rx_miso must contain valid data
 // when this transition happens, and the data must remain stable until the next command starts.
 //
-
+// CPOL = 0 (SCLK = 0 when it's idle), CPHA = 0 (data transition at negedge SCLK, data sampling at posedge SCLK) => Mode 0
 
 module spi_drv #(
     parameter integer               CLK_DIVIDE  = 100, // Clock divider to indicate frequency of SCLK
@@ -53,5 +53,87 @@ module spi_drv #(
     input                           MISO,          // Master in slave out pin (data input from the slave)
     output                          SS_N           // Slave select, will be 0 during a SPI transaction
 );
+
+    // Internal wires
+    wire sclk_en;
+    wire data_counter_up_flag;
+    wire sclk_counter_up_flag;
+
+    // Internal regsiters
+    reg [$clog2(SPI_MAXLEN):0] data_counter_reg;
+    reg [SPI_MAXLEN-1:0] shift_reg;
+    reg sclk_reg;
+    reg [7:0] sclk_counter_reg;
+    
+    //----------------------FSM-------------------------
+    typedef enum {
+        reset_state,
+        idle_state,
+        transaction_state
+    } state_type;
+
+    state_type current_state, next_state;
+
+    always_ff@(posedge clk) begin
+        if (!sresetn)
+            current_state <= reset_state;
+            //next_state <= reset_state;
+        else 
+            current_state <= next_state;
+    end
+
+    always_comb begin
+        SS_N = 1;
+        spi_drv_rdy = 0;
+        sclk_en = 0;
+        case(current_state)
+        reset_state: begin
+            if (!sresetn)
+                next_state = reset_state;
+            else
+                next_state = idle_state;
+        end
+
+        idle_state: begin
+            spi_drv_rdy = 1;
+            if (start_cmd)
+                next_state = transaction_state;
+            else
+                next_state = idle_state;
+        end
+        
+        transaction_state: begin
+            SS_N = 0;
+            sclk_en = 1;
+            if (counter_up_flag) // We have completed all the transactions
+                next_state = idle_state;
+            else
+                next_state = transaction_state;
+        end
+
+        default: next_state = reset_state;
+        endcase
+    end
+
+    //-------------------SCLK generator----------------------
+    // Whenever the counter reaches CLK_DIVIDE/2 -1, sclk_reg will flip
+    always_ff@(posedge clk) begin
+        if (!sresetn || !sclk_en)
+            sclk_reg <= 0;
+        else if (sclk_en && sclk_counter_up_flag)
+            sclk_reg <= ~sclk_reg;
+    end
+
+    always_ff@(posedge clk) begin
+        if (!sresetn || sclk_counter_up_flag)
+            sclk_counter_reg <= 0;
+        else if (sclk_en)
+            sclk_counter_reg <= sclk_counter_reg + 1;
+    end
+
+    assign SCLK = sclk_reg;
+    assign sclk_counter_up_flag = (sclk_counter_reg == (CLK_DIVIDE > 1) - 1);
+
+    //-------------------Shift registers---------------------
 
 endmodule
