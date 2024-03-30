@@ -55,21 +55,33 @@ module spi_drv #(
 );
 
     // Internal wires
-    wire sclk_en;
-    wire data_counter_up_flag;
-    wire sclk_counter_up_flag;
+    logic sclk_en;
+    logic data_counter_up_flag;
+    logic sclk_counter_up_flag;
+    logic resetn_shift;
+    logic load_tx;
+    logic ss_n;
+    logic ready;
+    logic latch_miso;
+    logic sclk_rising_edge;
+    logic sclk_falling_edge;
 
     // Internal regsiters
     reg [$clog2(SPI_MAXLEN):0] data_counter_reg;
-    reg [SPI_MAXLEN-1:0] shift_reg;
+    reg [SPI_MAXLEN-1:0] write_shift_reg;
+    reg [SPI_MAXLEN-1:0] read_shift_reg;
     reg sclk_reg;
     reg [7:0] sclk_counter_reg;
+    reg [$clog2(SPI_MAXLEN):0] n_clks_reg;
+    reg [SPI_MAXLEN-1:0] rx_miso_reg;
     
     //----------------------FSM-------------------------
     typedef enum {
         reset_state,
         idle_state,
-        transaction_state
+        load_state,
+        transaction_state,
+        latch_state
     } state_type;
 
     state_type current_state, next_state;
@@ -77,38 +89,62 @@ module spi_drv #(
     always_ff@(posedge clk) begin
         if (!sresetn)
             current_state <= reset_state;
-            //next_state <= reset_state;
         else 
             current_state <= next_state;
     end
 
     always_comb begin
-        SS_N = 1;
-        spi_drv_rdy = 0;
+        resetn_shift = 1;
+        ss_n = 1;
+        ready = 0;
         sclk_en = 0;
+        load_tx = 0;
+        latch_miso = 0;
+
         case(current_state)
         reset_state: begin
+            resetn_shift = 0;
             if (!sresetn)
                 next_state = reset_state;
+            else if (start_cmd)
+                next_state = load_state;
             else
                 next_state = idle_state;
         end
 
         idle_state: begin
-            spi_drv_rdy = 1;
+            ready = 1;
+            if (start_cmd) begin
+                next_state = load_state;
+            end
+            else
+                next_state = idle_state;
+        end
+
+        load_state: begin // Load n_clks and tx_data into internal registers
+            load_tx = 1;
+            next_state = transaction_state;
+        end
+        
+        transaction_state: begin
+            ss_n = 0;
+            sclk_en = 1;
+            if (data_counter_up_flag && !sclk_reg) 
+                // We have completed all the transactions as indicated by data_counter_up_flag,
+                // wait until sclk_reg goes low then exit this state
+                next_state = latch_state;
+            else
+                next_state = transaction_state;
+        end
+
+        latch_state: begin
+            ready = 1;
+            latch_miso = 1;
+            resetn_shift = 0;
             if (start_cmd)
                 next_state = transaction_state;
             else
                 next_state = idle_state;
-        end
-        
-        transaction_state: begin
-            SS_N = 0;
-            sclk_en = 1;
-            if (counter_up_flag) // We have completed all the transactions
-                next_state = idle_state;
-            else
-                next_state = transaction_state;
         end
 
         default: next_state = reset_state;
@@ -116,8 +152,13 @@ module spi_drv #(
     end
 
     //-------------------SCLK generator----------------------
-    // Whenever the counter reaches CLK_DIVIDE/2 -1, sclk_reg will flip
+    /*
+    Whenever sclk_counter_reg reaches (CLK_DIVIDE/2-1), sclk_reg will flip. 
+    Hence there will be CLK_DIVIDE cycles of clk within one cycle of sclk_reg, 
+    essentially dividing the clock frequency by CLK_DIVIDE.
+    */
     always_ff@(posedge clk) begin
+        sclk
         if (!sresetn || !sclk_en)
             sclk_reg <= 0;
         else if (sclk_en && sclk_counter_up_flag)
@@ -131,9 +172,70 @@ module spi_drv #(
             sclk_counter_reg <= sclk_counter_reg + 1;
     end
 
-    assign SCLK = sclk_reg;
-    assign sclk_counter_up_flag = (sclk_counter_reg == (CLK_DIVIDE > 1) - 1);
+    always_ff@(posedge clk) begin
+        /*
+        Used to indicate the rising and falling edge of SCLK
+        */
+        sclk_rising_edge <= 0;
+        sclk_falling_edge <= 0;
+        if (sclk_en && sclk_counter_up_flag) begin
+            if (sclk_reg == 0)
+                sclk_rising_edge <= 1;
+            else
+                sclk_falling_edge <= 1;
+        end
+    end
+
+    assign sclk_counter_up_flag = (sclk_counter_reg == (CLK_DIVIDE>>1)-1);
 
     //-------------------Shift registers---------------------
+    always_ff@(posedge sclk_reg or negedge resetn_shift) begin
+        if (!resetn_shift)
+            read_shift_reg <= 0;
+        else if (!data_counter_up_flag)
+            read_shift_reg <= {read_shift_reg[SPI_MAXLEN-1:0], MISO};
+
+    end
+
+    always_ff@(negedge sclk_reg or negedge resetn_shift or posedge load_tx) begin
+        if (!resetn_shift)
+            write_shift_reg <= 0;
+        else if (load_tx)
+            write_shift_reg <= tx_data;
+        else if (!data_counter_up_flag)
+            write_shift_reg <= {write_shift_reg[SPI_MAXLEN-1:0], 1'b0};
+    end
+
+    //-------------------Internal registers-------------------
+    always_ff@(posedge clk) begin
+        if (!sresetn)
+            n_clks_reg <= 0;
+        else if (load_tx)
+            n_clks_reg <= n_clks;
+    end
+
+    always_ff@(posedge clk or posedge latch_miso) begin
+        if (!sresetn)
+            rx_miso_reg <= 0;
+        else if (latch_miso)
+            rx_miso_reg <= read_shift_reg;
+    end
+
+    //-------------------Data counter-----------------------
+    always_ff@(posedge sclk_reg or negedge resetn_shift) begin
+        if (!resetn_shift)
+            data_counter_reg <= 0;
+        else if (!data_counter_up_flag)
+            data_counter_reg <= data_counter_reg + 1;
+    end
+
+    assign data_counter_up_flag = data_counter_reg == n_clks_reg;
+
+    //----------------------Output-----------------------
+    assign rx_miso = rx_miso_reg;
+    assign SS_N = ss_n;
+    assign spi_drv_rdy = ready;
+    assign MOSI = write_shift_reg[SPI_MAXLEN-1]; // At negedge SCLK, send out the MSB of write_shift_reg 
+    assign SCLK = sclk_reg;
 
 endmodule
