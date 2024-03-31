@@ -54,7 +54,7 @@ module spi_drv #(
     output                          SS_N           // Slave select, will be 0 during a SPI transaction
 );
 
-    // Internal wires
+    // Internal logics
     logic sclk_en;
     logic data_counter_up_flag;
     logic sclk_counter_up_flag;
@@ -62,18 +62,18 @@ module spi_drv #(
     logic load_tx;
     logic ss_n;
     logic ready;
-    logic latch_miso;
     logic sclk_rising_edge;
     logic sclk_falling_edge;
+    logic latch_rx;
 
     // Internal regsiters
-    reg [$clog2(SPI_MAXLEN):0] data_counter_reg;
-    reg [SPI_MAXLEN-1:0] write_shift_reg;
-    reg [SPI_MAXLEN-1:0] read_shift_reg;
-    reg sclk_reg;
-    reg [7:0] sclk_counter_reg;
-    reg [$clog2(SPI_MAXLEN):0] n_clks_reg;
-    reg [SPI_MAXLEN-1:0] rx_miso_reg;
+    logic [$clog2(SPI_MAXLEN):0] data_counter_reg;
+    logic [SPI_MAXLEN-1:0] write_shift_reg;
+    logic [SPI_MAXLEN-1:0] read_shift_reg;
+    logic sclk_reg;
+    logic [7:0] sclk_counter_reg;
+    logic [$clog2(SPI_MAXLEN):0] n_clks_reg;
+    logic [SPI_MAXLEN-1:0]         rx_miso_reg;
     
     //----------------------FSM-------------------------
     typedef enum {
@@ -99,15 +99,13 @@ module spi_drv #(
         ready = 0;
         sclk_en = 0;
         load_tx = 0;
-        latch_miso = 0;
+        latch_rx = 0;
 
         case(current_state)
         reset_state: begin
             resetn_shift = 0;
             if (!sresetn)
                 next_state = reset_state;
-            else if (start_cmd)
-                next_state = load_state;
             else
                 next_state = idle_state;
         end
@@ -138,13 +136,10 @@ module spi_drv #(
         end
 
         latch_state: begin
-            ready = 1;
-            latch_miso = 1;
+            ss_n = 0;
+            latch_rx = 1;
             resetn_shift = 0;
-            if (start_cmd)
-                next_state = transaction_state;
-            else
-                next_state = idle_state;
+            next_state = idle_state;
         end
 
         default: next_state = reset_state;
@@ -158,7 +153,6 @@ module spi_drv #(
     essentially dividing the clock frequency by CLK_DIVIDE.
     */
     always_ff@(posedge clk) begin
-        sclk
         if (!sresetn || !sclk_en)
             sclk_reg <= 0;
         else if (sclk_en && sclk_counter_up_flag)
@@ -172,10 +166,8 @@ module spi_drv #(
             sclk_counter_reg <= sclk_counter_reg + 1;
     end
 
+    //Used to indicate the rising and falling edge of SCLK
     always_ff@(posedge clk) begin
-        /*
-        Used to indicate the rising and falling edge of SCLK
-        */
         sclk_rising_edge <= 0;
         sclk_falling_edge <= 0;
         if (sclk_en && sclk_counter_up_flag) begin
@@ -189,24 +181,38 @@ module spi_drv #(
     assign sclk_counter_up_flag = (sclk_counter_reg == (CLK_DIVIDE>>1)-1);
 
     //-------------------Shift registers---------------------
-    always_ff@(posedge sclk_reg or negedge resetn_shift) begin
+    /*
+    read_shift_reg is used to latch the incoming MISO data on every rising edge of SCLK while shifting previous bits to make room for the new one
+    (actually delayed by 1 clk cycle, but functionally it's correct)
+    write_shift_reg is used to latch tx_data at the start of each transaction, at every falling edge of SCLK, write_shift_reg
+    will shift its MSB out as MOSI
+    */
+    always_ff@(posedge clk) begin
         if (!resetn_shift)
             read_shift_reg <= 0;
-        else if (!data_counter_up_flag)
+        else if (sclk_rising_edge && !data_counter_up_flag)
             read_shift_reg <= {read_shift_reg[SPI_MAXLEN-1:0], MISO};
 
     end
 
-    always_ff@(negedge sclk_reg or negedge resetn_shift or posedge load_tx) begin
+    always_ff@(posedge clk) begin
         if (!resetn_shift)
             write_shift_reg <= 0;
         else if (load_tx)
-            write_shift_reg <= tx_data;
-        else if (!data_counter_up_flag)
+            write_shift_reg <= tx_data << (SPI_MAXLEN - n_clks);
+        else if (sclk_falling_edge && !data_counter_up_flag)
             write_shift_reg <= {write_shift_reg[SPI_MAXLEN-1:0], 1'b0};
     end
 
-    //-------------------Internal registers-------------------
+    always_ff@(posedge clk) begin
+        if (!sresetn)
+            rx_miso_reg <= 0;
+        else if (latch_rx)
+            rx_miso_reg <= read_shift_reg;
+    end
+
+    //-------------------Data counter-----------------------
+    // When number of SCLK == n_clks, set the flag to terminate the transaction
     always_ff@(posedge clk) begin
         if (!sresetn)
             n_clks_reg <= 0;
@@ -214,18 +220,10 @@ module spi_drv #(
             n_clks_reg <= n_clks;
     end
 
-    always_ff@(posedge clk or posedge latch_miso) begin
-        if (!sresetn)
-            rx_miso_reg <= 0;
-        else if (latch_miso)
-            rx_miso_reg <= read_shift_reg;
-    end
-
-    //-------------------Data counter-----------------------
-    always_ff@(posedge sclk_reg or negedge resetn_shift) begin
+    always_ff@(posedge clk) begin
         if (!resetn_shift)
             data_counter_reg <= 0;
-        else if (!data_counter_up_flag)
+        else if (sclk_rising_edge && !data_counter_up_flag)
             data_counter_reg <= data_counter_reg + 1;
     end
 
